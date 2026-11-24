@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import platform
 import shutil
 import subprocess
 import tempfile
@@ -62,7 +63,18 @@ def _play_wav_bytes(wav_bytes: bytes, sample_rate: int) -> subprocess.Popen | No
 
 
 def _play_audio_file(path: str) -> subprocess.Popen | None:
-    """Play an audio file (e.g. edge-tts MP3) with the first player found."""
+    """Play an audio file (e.g. edge-tts MP3) with the first player found.
+
+    On Windows the built-in MCI player is tried first — stock Windows has
+    no mpv/ffplay/mpg123, so without it edge-tts audio was synthesized
+    and then never heard. Falls back to mpv / ffplay / mpg123, and to
+    None when nothing can play the file.
+    """
+    if platform.system() == "Windows":
+        try:
+            return _MCIPlayer(path)
+        except OSError:
+            pass  # fall through to the external players below
     for player, args in (
         ("mpv", ["--no-video", "--really-quiet"]),
         ("ffplay", ["-nodisp", "-autoexit", "-loglevel", "quiet"]),
@@ -78,6 +90,42 @@ def _play_audio_file(path: str) -> subprocess.Popen | None:
             except OSError:
                 return None
     return None
+
+
+class _MCIPlayer:
+    """Windows-native audio player via winmm MCI — no extra installs.
+
+    Plays an MP3 with the media control interface built into every
+    Windows. Mimics the ``subprocess.Popen`` surface EdgeTTS uses:
+    ``wait()`` blocks until the file finishes, ``poll()`` is None while
+    playing and 0 once done, ``terminate()`` stops playback (barge-in).
+    """
+
+    def __init__(self, path: str) -> None:
+        import ctypes
+
+        self._winmm = ctypes.windll.winmm
+        self.alias = f"kairo{id(self) % 10**8}"
+        self._done = False
+        self._winmm.mciSendStringW(f"close {self.alias}", None, 0, None)
+        err = self._winmm.mciSendStringW(
+            f'open "{path}" alias {self.alias}', None, 0, None
+        )
+        if err != 0:
+            raise OSError(f"MCI could not open {path} (error {err})")
+
+    def wait(self) -> None:
+        self._winmm.mciSendStringW(f"play {self.alias} wait", None, 0, None)
+        self._done = True
+        self._winmm.mciSendStringW(f"close {self.alias}", None, 0, None)
+
+    def poll(self) -> int | None:
+        return 0 if self._done else None
+
+    def terminate(self) -> None:
+        self._winmm.mciSendStringW(f"stop {self.alias}", None, 0, None)
+        self._winmm.mciSendStringW(f"close {self.alias}", None, 0, None)
+        self._done = True
 
 
 class PiperTTS:
@@ -194,7 +242,8 @@ class EdgeTTS:
 
     ``speak()`` returns once speaking has started; ``stop()`` cancels
     the download/playback. The audio is synthesized to a temp MP3 and
-    played with the first available player (mpv / ffplay / mpg123).
+    played with the first available player (Windows MCI, then mpv /
+    ffplay / mpg123).
     """
 
     def __init__(self, voice: str = ENGLISH_VOICE) -> None:

@@ -22,7 +22,7 @@ from kairo.voice.base import (
 )
 from kairo.voice.loop import VoiceLoop
 from kairo.voice.stt import FasterWhisperSTT, VoskSTT
-from kairo.voice.tts import EdgeTTS, PiperTTS, pick_tts
+from kairo.voice.tts import EdgeTTS, PiperTTS, _MCIPlayer, _play_audio_file, pick_tts
 from kairo.voice.wake import OpenWakeWordAdapter, PorcupineAdapter
 
 
@@ -307,6 +307,78 @@ def test_run_hands_free_raises_without_audio_engines():
     loop = _loop(stt=NullSTT(), tts=NullTTS(), wake=FakeWake([True]))
     with pytest.raises(NotAvailable):
         loop.run_hands_free()
+
+
+# -- Windows MCI player (edge-tts playback on stock Windows) --------------
+class FakeWinMM:
+    """Records the MCI commands sent — stands in for ctypes.windll.winmm."""
+
+    def __init__(self, open_error: int = 0):
+        self.commands: list[str] = []
+        self.open_error = open_error
+
+    def mciSendStringW(self, command, _a, _b, _c):
+        self.commands.append(command)
+        if command.startswith("open "):
+            return self.open_error
+        return 0
+
+
+class FakeWindll:
+    def __init__(self, winmm):
+        self.winmm = winmm
+
+
+def _mci_player(monkeypatch, open_error: int = 0):
+    import ctypes
+
+    winmm = FakeWinMM(open_error)
+    # ctypes.windll only exists on Windows; raising=False lets us add it here.
+    monkeypatch.setattr(ctypes, "windll", FakeWindll(winmm), raising=False)
+    monkeypatch.setattr("kairo.voice.tts.platform.system", lambda: "Windows")
+    return _MCIPlayer(r"C:\Temp\reply.mp3"), winmm
+
+
+def test_mci_player_opens_plays_and_closes(monkeypatch):
+    player, winmm = _mci_player(monkeypatch)
+    assert player.poll() is None  # playing (not started yet, but not done)
+    player.wait()
+    assert player.poll() == 0
+    assert any(c.startswith("open ") and "reply.mp3" in c for c in winmm.commands)
+    assert any(c.startswith("play ") and c.endswith(" wait") for c in winmm.commands)
+    assert winmm.commands[-1].startswith("close ")
+
+
+def test_mci_player_terminate_stops_and_closes(monkeypatch):
+    player, winmm = _mci_player(monkeypatch)
+    player.terminate()
+    assert player.poll() == 0
+    assert any(c.startswith("stop ") for c in winmm.commands)
+    assert any(c.startswith("close ") for c in winmm.commands)
+
+
+def test_mci_player_raises_when_open_fails(monkeypatch):
+    import pytest
+
+    with pytest.raises(OSError):
+        _mci_player(monkeypatch, open_error=277)
+
+
+def test_play_audio_file_uses_mci_on_windows(monkeypatch):
+    import ctypes
+
+    winmm = FakeWinMM()
+    monkeypatch.setattr(ctypes, "windll", FakeWindll(winmm), raising=False)
+    monkeypatch.setattr("kairo.voice.tts.platform.system", lambda: "Windows")
+    player = _play_audio_file(r"C:\Temp\reply.mp3")
+    assert isinstance(player, _MCIPlayer)
+    assert any(c.startswith("open ") for c in winmm.commands)
+
+
+def test_play_audio_file_returns_none_when_no_player_on_linux(monkeypatch):
+    monkeypatch.setattr("kairo.voice.tts.platform.system", lambda: "Linux")
+    monkeypatch.setattr("shutil.which", lambda name: None)
+    assert _play_audio_file("/tmp/reply.mp3") is None
 
 
 # -- pick_tts ---------------------------------------------------------------
