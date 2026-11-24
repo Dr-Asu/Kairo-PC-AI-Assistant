@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kairo Assistant — Dashboard</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 720px; margin: 2em auto; padding: 0 1em; color: #1a1a1a; }
+  h1 { font-size: 1.4em; }
+  .card { border: 1px solid #ccc; border-radius: 8px; padding: 1em; margin: 1em 0; }
+  .ok { color: #0a7a2f; } .warn { color: #b26a00; }
+  input[type=text] { width: 70%; padding: .5em; }
+  button { padding: .5em 1em; }
+  pre { white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<h1>Kairo Assistant</h1>
+<p>Boss, this is your dashboard. It shows what the assistant is doing right now.</p>
+<div class="card">
+  <h2>Status</h2>
+  <pre id="status">Loading…</pre>
+</div>
+<div class="card">
+  <h2>Talk to it</h2>
+  <input type="text" id="cmd" placeholder="Type a command, e.g. what time is it">
+  <button onclick="send()">Send</button>
+  <pre id="reply"></pre>
+</div>
+<div class="card">
+  <h2>Recent tasks</h2>
+  <pre id="tasks">Loading…</pre>
+</div>
+<script>
+async function load() {
+  const s = await fetch('/api/status').then(r => r.json());
+  document.getElementById('status').textContent = JSON.stringify(s, null, 2);
+  const t = await fetch('/api/tasks').then(r => r.json());
+  document.getElementById('tasks').textContent = JSON.stringify(t, null, 2);
+}
+async function send() {
+  const text = document.getElementById('cmd').value;
+  const r = await fetch('/api/command', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({text})}).then(r => r.json());
+  document.getElementById('reply').textContent = r.reply || JSON.stringify(r);
+  load();
+}
+load();
+</script>
+</body>
+</html>

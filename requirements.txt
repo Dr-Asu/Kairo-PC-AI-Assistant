@@ -1,0 +1,32 @@
+# Core dependencies — always installed.
+fastapi
+uvicorn
+httpx
+pyyaml
+psutil
+openpyxl
+python-docx
+python-pptx
+pandas
+python-dotenv
+
+# Optional: voice pipeline (install on the Windows PC when setting up voice)
+# faster-whisper
+# piper-tts
+# openwakeword
+# vosk
+# sounddevice
+# edge-tts
+
+# Optional: browser automation (WhatsApp Web, Browser Agent)
+# playwright
+
+# Optional: Windows-only control libraries (Windows PC only)
+# pywin32
+# pycaw
+# screen-brightness-control
+# pyautogui
+# pywinauto
+
+# Development / tests
+pytest

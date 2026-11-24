@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kairo-assistant"
+version = "0.2.0"
+description = "Kairo-style PC AI assistant — free, local-first, voice-controlled Windows assistant"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "httpx",
+    "pyyaml",
+    "psutil",
+    "openpyxl",
+    "python-docx",
+    "python-pptx",
+    "pandas",
+    "python-dotenv",
+]
+
+[project.optional-dependencies]
+voice = [
+    "faster-whisper",
+    "piper-tts",
+    "openwakeword",
+    "vosk",
+    "sounddevice",
+    "edge-tts",
+]
+browser = ["playwright"]
+windows = [
+    "pywin32",
+    "pycaw",
+    "screen-brightness-control",
+    "pyautogui",
+    "pywinauto",
+]
+dev = ["pytest"]
+
+[project.scripts]
+kairo = "kairo.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "windows_only: tests that only run on Windows",
+]
