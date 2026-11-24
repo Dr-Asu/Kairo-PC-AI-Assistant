@@ -17,6 +17,10 @@ import os
 import platform
 import shutil
 import subprocess
+import time
+from pathlib import Path
+
+from ..apps import find_app, load_apps, resolve_exe
 
 # Common app names -> candidate executables (Linux first, Windows fallback).
 APP_MAP: dict[str, list[str]] = {
@@ -41,8 +45,9 @@ class NotAvailable(RuntimeError):
 class SystemController:
     """Operate the PC. ``dry_run=True`` logs actions instead of doing them."""
 
-    def __init__(self, dry_run: bool = False) -> None:
+    def __init__(self, dry_run: bool = False, data_dir: str | Path | None = None) -> None:
         self.dry_run = dry_run
+        self.data_dir = Path(data_dir) if data_dir else Path.home() / ".kairo"
         self.is_windows = platform.system() == "Windows"
         self.log: list[str] = []  # every action taken, for the audit trail
 
@@ -61,19 +66,36 @@ class SystemController:
         return max(0, min(100, int(level)))
 
     # -- apps -------------------------------------------------------------
+    @staticmethod
+    def _is_running(image: str) -> bool:
+        """True when a process with this image name (e.g. EXCEL.EXE) runs."""
+        try:
+            import psutil
+        except ImportError:
+            return False
+        want = image.lower()
+        try:
+            for proc in psutil.process_iter(["name"]):
+                if (proc.info.get("name") or "").lower() == want:
+                    return True
+        except Exception:
+            return False
+        return False
+
+    def _wait_for(self, image: str, timeout: float, want_running: bool) -> bool:
+        """Poll until the process appears (or disappears); False on timeout."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if self._is_running(image) == want_running:
+                return True
+            time.sleep(0.5)
+        return self._is_running(image) == want_running
+
     def open_app(self, name: str) -> str:
         if self.dry_run:
             return self._dry(f"open {name}")
         if self.is_windows:
-            try:
-                os.startfile(name)  # type: ignore[attr-defined]
-            except OSError:
-                subprocess.Popen(
-                    ["powershell", "-Command", "Start-Process", name],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-            return self._record(f"Opened {name}")
+            return self._open_app_windows(name)
         # Linux: a real file/folder opens with xdg-open; otherwise map the
         # name to a known executable and launch it.
         if os.path.exists(name):
@@ -82,9 +104,64 @@ class SystemController:
         for candidate in APP_MAP.get(name.lower(), [name]):
             path = shutil.which(candidate)
             if path:
-                subprocess.Popen([path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                proc = subprocess.Popen([path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                time.sleep(0.3)
+                if proc.poll() is not None and proc.returncode != 0:
+                    raise NotAvailable(
+                        f"'{name}' ({candidate}) started and exited at once "
+                        f"(code {proc.returncode}) — it may have failed to start"
+                    )
                 return self._record(f"Opened {name} ({candidate})")
         raise NotAvailable(f"Cannot open '{name}': no matching app found on this PC")
+
+    def _open_app_windows(self, name: str) -> str:
+        """Windows open: resolve the app from the installed-apps index,
+        launch it, then CHECK the process really started. Never report
+        'Opened' for an app that never appeared."""
+        if not name.strip():
+            raise ValueError("open_app needs an app name, boss")
+        app = find_app(name, self.data_dir)
+        if app is None:
+            raise NotAvailable(
+                f"I don't know an app called '{name}' on this PC, boss. "
+                "Say 'list apps' to see what I know, or 'rescan apps' "
+                "if you just installed it."
+            )
+        exe = resolve_exe(app)
+        if exe and self._is_running(exe):
+            return self._record(f"{app.name} is already open, boss")
+        try:
+            os.startfile(app.target)  # type: ignore[attr-defined]
+        except OSError:
+            subprocess.Popen(
+                ["powershell", "-NoProfile", "-Command", "Start-Process", app.target],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        if not exe:
+            # Could not work out the process name (rare) — say so plainly
+            # instead of claiming a verified open.
+            time.sleep(1.5)
+            return self._record(
+                f"Opened {app.name} — I could not check it started, "
+                "boss, please look at your screen"
+            )
+        if self._wait_for(exe, timeout=6.0, want_running=True):
+            return self._record(f"Opened {app.name}")
+        raise NotAvailable(
+            f"I tried to open {app.name} but it did not start, boss — "
+            "it may have failed, or be waiting for something on screen"
+        )
+
+    def list_apps(self) -> list[str]:
+        """Display names of every app Kairo knows on this PC."""
+        if self.dry_run:
+            return ["(dry run — app list not read)"]
+        return [app.name for app in load_apps(self.data_dir)]
+
+    def rescan_apps(self) -> int:
+        """Rebuild the installed-apps index now; returns how many apps."""
+        return len(load_apps(self.data_dir, force=True))
 
     def close_app(self, name: str) -> str:
         if not name.strip():
@@ -92,16 +169,31 @@ class SystemController:
         if self.dry_run:
             return self._dry(f"close {name}")
         if self.is_windows:
-            image = name if name.lower().endswith(".exe") else f"{name}.exe"
+            app = find_app(name, self.data_dir)
+            if app is None:
+                raise NotAvailable(
+                    f"I don't know an app called '{name}' on this PC, boss."
+                )
+            exe = resolve_exe(app) or (
+                app.name if app.name.lower().endswith(".exe") else f"{app.name}.exe"
+            )
+            if not self._is_running(exe):
+                raise NotAvailable(f"{app.name} is not running, boss")
             subprocess.run(
-                ["taskkill", "/IM", image, "/F"],
+                ["taskkill", "/IM", exe, "/F"],
                 capture_output=True,
                 check=False,
             )
-            return self._record(f"Closed {name}")
+            if self._wait_for(exe, timeout=3.0, want_running=False):
+                return self._record(f"Closed {app.name}")
+            raise NotAvailable(
+                f"I tried to close {app.name} but it is still running, boss"
+            )
         if shutil.which("pkill") is None:
             raise NotAvailable("Cannot close apps: 'pkill' is not available on this PC")
-        subprocess.run(["pkill", "-f", name], capture_output=True, check=False)
+        done = subprocess.run(["pkill", "-f", name], capture_output=True, check=False)
+        if done.returncode == 1:
+            raise NotAvailable(f"'{name}' is not running")
         return self._record(f"Closed {name}")
 
     # -- volume / brightness ----------------------------------------------

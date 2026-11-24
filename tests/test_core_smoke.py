@@ -96,6 +96,18 @@ def test_guard_untrusted_wraps():
 
 
 # -- intents --------------------------------------------------------------
+def test_intent_list_and_rescan_apps():
+    reg = default_registry()
+    m = reg.match("list apps")
+    assert m and m.name == "list_apps"
+    m = reg.match("what apps do you know")
+    assert m and m.name == "list_apps"
+    m = reg.match("rescan apps")
+    assert m and m.name == "rescan_apps"
+    m = reg.match("find new apps")
+    assert m and m.name == "rescan_apps"
+
+
 def test_intent_open_app_english_and_urdu():
     reg = default_registry()
     m = reg.match("open notepad")

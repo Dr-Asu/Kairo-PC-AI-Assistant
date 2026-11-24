@@ -75,6 +75,22 @@ def builtin_intents() -> list[Intent]:
             description="Close an app by name — 'close notepad', 'band karo chrome'.",
         ),
         Intent(
+            "list_apps",
+            [
+                r"(?:what|which)\s+apps?(?:\s+(?:do\s+you\s+know|can\s+you\s+open))?\s*$",
+                r"list\s+(?:apps?|programs?)\s*$",
+                r"(?:show|tell)\s+me\s+(?:the\s+)?apps?\s*$",
+            ],
+            "system",
+            description="List the apps Kairo knows — 'list apps', 'what apps do you know'.",
+        ),
+        Intent(
+            "rescan_apps",
+            [r"(?:rescan|refresh|find\s+new|check\s+for\s+new)\s+apps?\s*$"],
+            "system",
+            description="Re-scan for newly installed apps — 'rescan apps'.",
+        ),
+        Intent(
             "set_volume",
             [r"(?:volume|awaz)\s*(?:to|set|kar\s+do)?\s*(?P<level>\d{1,3})"],
             "system",

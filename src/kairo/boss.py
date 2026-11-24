@@ -86,16 +86,16 @@ def _confirmation_for_intent(intent_name: str) -> Confirmation | None:
 class _SystemWorker(Worker):
     """Minimal system worker, kept inside boss.py (Builder A).
 
-    Delegates to ``pc.controller.SystemController``. The controller is
-    still a stub (Builder C), so on this machine its calls raise
-    ``NotImplementedError`` and are reported plainly as unavailable —
-    never executed silently and never crashing the boss. Windows-only
-    imports live inside the controller, so this file imports on Linux.
+    Delegates to ``pc.controller.SystemController``. Opens are verified
+    against the installed-apps index — a launch that never starts is
+    reported as failed, never as 'Opened'. Windows-only imports live
+    inside the controller, so this file imports on Linux.
     """
 
     name = "system"
     intents = {
-        "open_app", "close_app", "set_volume", "set_brightness",
+        "open_app", "close_app", "list_apps", "rescan_apps",
+        "set_volume", "set_brightness",
         "lock_pc", "sleep_pc", "shutdown_pc", "restart_pc",
         "mute", "unmute", "focus_mode_on", "focus_mode_off",
     }
@@ -105,7 +105,9 @@ class _SystemWorker(Worker):
         try:
             from .pc.controller import SystemController
 
-            controller = SystemController(dry_run=ctx.dry_run)
+            settings = getattr(ctx, "settings", None)
+            data_dir = getattr(settings, "data_dir", None) if settings else None
+            controller = SystemController(dry_run=ctx.dry_run, data_dir=data_dir)
             return self._run_with_controller(controller, intent, ctx)
         except NotImplementedError:
             return WorkerResult.failed(
@@ -122,6 +124,24 @@ class _SystemWorker(Worker):
                 return WorkerResult.done(controller.open_app(slots.get("app", "")))
             if intent == "close_app":
                 return WorkerResult.done(controller.close_app(slots.get("app", "")))
+            if intent == "list_apps":
+                names = controller.list_apps()
+                if not names:
+                    return WorkerResult.done(
+                        "Boss, I don't know any apps on this PC yet — "
+                        "say 'rescan apps' and I will look again."
+                    )
+                shown = names[:60]
+                extra = f"\n…and {len(names) - len(shown)} more." if len(names) > len(shown) else ""
+                return WorkerResult.done(
+                    "Boss, these are the apps I know:\n" + "\n".join(f"• {n}" for n in shown) + extra
+                )
+            if intent == "rescan_apps":
+                count = controller.rescan_apps()
+                return WorkerResult.done(
+                    f"Checked again, boss — I now know {count} apps on this PC. "
+                    "Try 'open <name>'."
+                )
             if intent == "set_volume":
                 level = max(0, min(100, int(slots.get("level", "50"))))
                 return WorkerResult.done(controller.set_volume(level))

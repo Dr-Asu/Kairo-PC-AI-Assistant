@@ -118,3 +118,5 @@ the Windows PC — see STATUS.md.
 **v0.2.2 (24 Nov 2026):** brain fallback — with both keys set, if Groq fails the boss now tries Gemini instead of dropping to local mode (and vice versa). One provider being down or overloaded no longer kills the cloud brain.
 
 **v0.2.3 (24 Nov 2026):** Groq model updated — `llama-3.3-70b-versatile` went enterprise-only on Groq (Aug 2026), now uses `openai/gpt-oss-120b`. Model names are now changeable in `.env` (`GROQ_MODEL` / `GEMINI_MODEL`), so a future retirement needs no code fix.
+
+**v0.3.0 (24 Nov 2026):** apps are no longer a hardcoded list. Kairo scans the PC for every installed app (Start Menu + App Paths registry), matches names forgivingly ("excell" still finds Excel), re-scans automatically when a name is not found, and — the real fix — **verifies the app actually started** before saying "Opened". A launch that never starts is now reported as failed, with the reason, instead of a false success. New commands: `list apps`, `rescan apps`; `close <app>` also verifies the app really closed.
