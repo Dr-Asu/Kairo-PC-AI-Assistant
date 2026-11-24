@@ -96,6 +96,14 @@ def _record_utterance(max_seconds: float = 15.0, silence_seconds: float = 1.5) -
     return b"".join(chunks)
 
 
+def pick_voice_mode(loop: "VoiceLoop", wake_requested: bool) -> str:
+    """Choose the voice mode: hands-free when asked for, or when a wake
+    engine is installed; otherwise push-to-talk (Enter to talk)."""
+    if wake_requested or loop.wake.available():
+        return "hands_free"
+    return "push_to_talk"
+
+
 class VoiceLoop:
     """Voice mode. Push-to-talk loop around ``boss.handle``."""
 

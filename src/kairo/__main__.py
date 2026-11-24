@@ -2,7 +2,7 @@
 
 Usage:
     python -m kairo            text mode — type commands, get replies
-    python -m kairo --voice    voice mode — push-to-talk (needs voice deps)
+    python -m kairo --voice    voice mode — hands-free when a wake engine is installed, else push-to-talk
     python -m kairo --voice --wake   hands-free voice — wake word, no Enter key
     python -m kairo --hud      serve the web dashboard on 127.0.0.1:8765
     python -m kairo --learn    run the nightly learning job once, then exit
@@ -17,7 +17,7 @@ import sys
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="kairo", description="Kairo Assistant")
-    parser.add_argument("--voice", action="store_true", help="voice mode (push-to-talk)")
+    parser.add_argument("--voice", action="store_true", help="voice mode (hands-free when a wake engine is installed, else push-to-talk)")
     parser.add_argument("--wake", action="store_true", help="hands-free voice: wake word instead of Enter (needs openWakeWord; use with --voice)")
     parser.add_argument("--hud", action="store_true", help="serve the web dashboard")
     parser.add_argument("--learn", action="store_true", help="run the nightly learning job once")
@@ -64,10 +64,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.voice:
         from .voice.base import NotAvailable
-        from .voice.loop import VoiceLoop
+        from .voice.loop import VoiceLoop, pick_voice_mode
 
         loop = VoiceLoop(boss, settings)
-        if args.wake:
+        if pick_voice_mode(loop, args.wake) == "hands_free":
             try:
                 loop.run_hands_free()
             except NotAvailable as exc:
@@ -75,6 +75,11 @@ def main(argv: list[str] | None = None) -> int:
                 print("[kairo] Falling back to push-to-talk voice mode.")
                 loop.run()
         else:
+            print(
+                '[kairo] Hands-free needs openWakeWord — install it with '
+                'pip install "openwakeword>=0.3" and restart, and voice '
+                "mode will listen on its own. Push-to-talk for now."
+            )
             loop.run()
         return 0
 

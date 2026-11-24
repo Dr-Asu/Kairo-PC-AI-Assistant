@@ -128,3 +128,5 @@ the Windows PC — see STATUS.md.
 **v0.3.3 (24 Nov 2026):** voice replies now actually play on stock Windows. edge-tts was synthesizing the reply MP3 and then printing "No audio player found" — it only knew mpv/ffplay/mpg123, none of which a normal Windows PC has. Added a built-in Windows MCI player (winmm, no extra installs) that plays the MP3 through Windows itself; barge-in stop still works.
 
 **v0.3.4 (24 Nov 2026):** hands-free no longer crashes on old openWakeWord. If the installed openWakeWord is 0.2.x (tflite models, needs tflite-runtime), the adapter now says so plainly and falls back to push-to-talk instead of dying with a traceback. Install `pip install "openwakeword>=0.3"` — 0.3+ is ONNX-only, no extra install needed.
+
+**v0.3.5 (24 Nov 2026):** `--voice` is now fully automatic by default. If openWakeWord is installed, plain `python -m kairo --voice` goes hands-free on its own — no `--wake` flag needed, no Enter key. It only falls back to push-to-talk when no wake engine is installed, and then it tells you the install command instead of just asking for Enter.

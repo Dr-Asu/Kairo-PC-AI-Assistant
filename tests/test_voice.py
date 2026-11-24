@@ -20,7 +20,7 @@ from kairo.voice.base import (
     NullTTS,
     NullWakeWord,
 )
-from kairo.voice.loop import VoiceLoop
+from kairo.voice.loop import VoiceLoop, pick_voice_mode
 from kairo.voice.stt import FasterWhisperSTT, VoskSTT
 from kairo.voice.tts import EdgeTTS, PiperTTS, _MCIPlayer, _play_audio_file, pick_tts
 from kairo.voice.wake import OpenWakeWordAdapter, PorcupineAdapter
@@ -305,6 +305,21 @@ def test_openwakeword_tflite_error_becomes_not_available(monkeypatch):
     with pytest.raises(NotAvailable) as excinfo:
         adapter.listen_once(timeout=5.0)
     assert "openwakeword>=0.3" in str(excinfo.value)
+
+
+def test_pick_voice_mode_hands_free_when_wake_engine_installed():
+    loop = _loop(stt=FakeSTT(), tts=FakeTTS(), wake=FakeWake([True]))
+    assert pick_voice_mode(loop, wake_requested=False) == "hands_free"
+
+
+def test_pick_voice_mode_hands_free_when_wake_requested():
+    loop = _loop(stt=FakeSTT(), tts=FakeTTS(), wake=NullWakeWord())
+    assert pick_voice_mode(loop, wake_requested=True) == "hands_free"
+
+
+def test_pick_voice_mode_push_to_talk_without_wake_engine():
+    loop = _loop(stt=FakeSTT(), tts=FakeTTS(), wake=NullWakeWord())
+    assert pick_voice_mode(loop, wake_requested=False) == "push_to_talk"
 
 
 # -- hands-free run() ------------------------------------------------------
