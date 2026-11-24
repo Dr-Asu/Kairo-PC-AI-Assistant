@@ -242,7 +242,29 @@ class _FakeStream:
         return np.zeros(n, dtype=np.int16), False
 
 
-def _stub_openwakeword(monkeypatch, model_cls, download_calls=None):
+class _FakeStream2D(_FakeStream):
+    """sounddevice InputStream stand-in: yields (n, 1) blocks, exactly
+    what a real mono stream returns — the shape that used to break
+    openWakeWord's streaming preprocessor."""
+
+    def read(self, n):
+        import numpy as np
+
+        return np.zeros((n, 1), dtype=np.int16), False
+
+
+class _FailingModel:
+    """Model whose predict always raises — one bad block must not kill
+    the listener."""
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def predict(self, block):
+        raise RuntimeError("boom")
+
+
+def _stub_openwakeword(monkeypatch, model_cls, download_calls=None, stream_cls=None):
     """Pretend openwakeword + sounddevice are installed, with a chosen Model."""
     module = types.ModuleType("openwakeword")
     monkeypatch.setitem(sys.modules, "openwakeword", module)
@@ -258,7 +280,7 @@ def _stub_openwakeword(monkeypatch, model_cls, download_calls=None):
     utils_module.download_models = download_models
     monkeypatch.setitem(sys.modules, "openwakeword.utils", utils_module)
     sd_module = types.ModuleType("sounddevice")
-    sd_module.InputStream = _FakeStream
+    sd_module.InputStream = stream_cls or _FakeStream
     monkeypatch.setitem(sys.modules, "sounddevice", sd_module)
 
 
@@ -280,6 +302,16 @@ class _SilentModel:
 
     def predict(self, block):
         return {"hey_jarvis": 0.0}
+
+
+class _ShapeCheckingModel(_WakeModel):
+    """Records the shape of every block it is given."""
+
+    seen_shapes: list = []
+
+    def predict(self, block):
+        _ShapeCheckingModel.seen_shapes.append(block.shape)
+        return super().predict(block)
 
 
 class _TfliteModel:
@@ -352,6 +384,23 @@ def test_openwakeword_falls_back_to_plain_model_on_old_versions(monkeypatch):
     _stub_openwakeword(monkeypatch, _OldModel)
     adapter = OpenWakeWordAdapter()
     assert adapter.listen_once(timeout=5.0) is True
+
+
+def test_openwakeword_flattens_2d_mic_blocks_before_predict(monkeypatch):
+    """A real mono stream yields (1280, 1) blocks; the model must get 1-D."""
+    _ShapeCheckingModel.seen_shapes = []
+    _stub_openwakeword(monkeypatch, _ShapeCheckingModel, stream_cls=_FakeStream2D)
+    adapter = OpenWakeWordAdapter()
+    assert adapter.listen_once(timeout=5.0) is True
+    assert _ShapeCheckingModel.seen_shapes
+    assert all(shape == (1280,) for shape in _ShapeCheckingModel.seen_shapes)
+
+
+def test_openwakeword_bad_block_does_not_kill_the_listener(monkeypatch, capsys):
+    _stub_openwakeword(monkeypatch, _FailingModel)
+    adapter = OpenWakeWordAdapter()
+    assert adapter.listen_once(timeout=0.05) is False
+    assert "continuing to listen" in capsys.readouterr().out
 
 
 def test_pick_voice_mode_hands_free_when_wake_engine_installed():

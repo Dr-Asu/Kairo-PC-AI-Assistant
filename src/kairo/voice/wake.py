@@ -102,10 +102,24 @@ class OpenWakeWordAdapter:
         model = self._load_model()
         deadline = time.monotonic() + timeout
         # 16 kHz mono int16, 80 ms blocks — what openWakeWord expects.
+        # sounddevice hands back shape (1280, 1) for one channel; flatten
+        # to 1-D first — a 2-D block corrupts openWakeWord's streaming
+        # buffer (it stores one-element rows) and the melspectrogram model
+        # then fails with "Invalid input shape: {1}".
         with sd.InputStream(samplerate=16000, channels=1, dtype="int16", blocksize=1280) as stream:
+            warned = False
             while time.monotonic() < deadline:
                 block, _overflow = stream.read(1280)
-                scores = model.predict(block)
+                block = block.reshape(-1)
+                try:
+                    scores = model.predict(block)
+                except Exception:
+                    # One bad audio block must not kill the whole voice
+                    # session — skip it and keep listening.
+                    if not warned:
+                        print("[kairo] Wake-word prediction failed on one audio block; continuing to listen.")
+                        warned = True
+                    continue
                 if any(score >= WAKE_THRESHOLD for score in scores.values()):
                     return True
         return False
