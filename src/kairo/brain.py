@@ -77,7 +77,7 @@ class GeminiBrain(Brain):
     """Google AI Studio (Gemini) free tier — REST generateContent endpoint."""
 
     name = "gemini"
-    MODEL = "gemini-2.0-flash"
+    MODEL = "gemini-3.8-flash"  # 2.0-flash retired by Google 24 Nov 2026
 
     def __init__(self, api_key: str, model: str = MODEL) -> None:
         self.api_key = api_key

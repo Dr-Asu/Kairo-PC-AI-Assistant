@@ -112,3 +112,5 @@ Windows-app routes need their optional libraries and your own logins on
 the Windows PC — see STATUS.md.
 
 **v0.2 (24 Nov 2026):** renamed from Stonic Assistant to Kairo (name chosen by the user); no behaviour change.
+
+**v0.2.1 (24 Nov 2026):** Gemini model updated — Google retired `gemini-2.0-flash`, now uses `gemini-3.8-flash` (brain + screen vision).

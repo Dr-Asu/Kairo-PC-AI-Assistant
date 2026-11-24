@@ -36,7 +36,7 @@ NO_KEY_MESSAGE = (
     "I cannot read what is on it."
 )
 
-_GEMINI_MODEL = "gemini-2.0-flash"
+_GEMINI_MODEL = "gemini-3.8-flash"  # 2.0-flash retired by Google 24 Nov 2026
 
 # A remaining step that would submit, send, pay or publish something.
 _SUBMIT_WORDS = ("submit", "send", "pay", "publish", "post ", "confirm payment", "place order")
