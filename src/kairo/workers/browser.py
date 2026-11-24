@@ -12,13 +12,56 @@ Builder E owns this file.
 
 from __future__ import annotations
 
+import webbrowser
 from pathlib import Path
+from urllib.parse import quote
 
 from .base import TaskContext, Worker, WorkerResult
 
 
 class BrowserNotAvailableError(RuntimeError):
     """Playwright (or the browser) is not installed / not usable."""
+
+
+# Well-known sites, so "open youtube" needs no URL and no Playwright.
+KNOWN_SITES = {
+    "youtube": "https://www.youtube.com",
+    "google": "https://www.google.com",
+    "gmail": "https://mail.google.com",
+    "facebook": "https://www.facebook.com",
+    "instagram": "https://www.instagram.com",
+    "twitter": "https://www.twitter.com",
+    "x": "https://www.x.com",
+    "whatsapp": "https://web.whatsapp.com",
+    "github": "https://github.com",
+    "linkedin": "https://www.linkedin.com",
+    "reddit": "https://www.reddit.com",
+    "netflix": "https://www.netflix.com",
+    "chatgpt": "https://chatgpt.com",
+    "wikipedia": "https://www.wikipedia.org",
+    "stackoverflow": "https://stackoverflow.com",
+    "amazon": "https://www.amazon.com",
+    "daraz": "https://www.daraz.pk",
+}
+
+
+def resolve_site(site: str) -> str:
+    """Turn a spoken site name into a URL.
+
+    A full URL passes through unchanged, a known name maps to its site,
+    a dotted name gets https://, and anything else becomes a Google
+    search — so the boss always gets something opened, never a shrug.
+    """
+    name = (site or "").strip().lower()
+    if not name:
+        return "https://www.google.com"
+    if name.startswith("http://") or name.startswith("https://"):
+        return name
+    if name in KNOWN_SITES:
+        return KNOWN_SITES[name]
+    if "." in name:
+        return "https://" + name
+    return "https://www.google.com/search?q=" + quote(name)
 
 
 # Phrases that mean "this page is a bot check, not the real site".
@@ -165,11 +208,38 @@ class BrowserAgent(Worker):
         if ctx.settings is not None and self.settings is None:
             self.settings = ctx.settings
         dry = self._is_dry_run(ctx)
-        intent = ctx.slots.get("intent") or ctx.slots.get("kind") or ""
+        # The boss dispatches with slots["_intent"]; older callers used
+        # "intent"/"kind". Read _intent first or site intents never fire
+        # (same latent bug the files worker had before v0.3.1).
+        intent = ctx.slots.get("_intent") or ctx.slots.get("intent") or ctx.slots.get("kind") or ""
         url = ctx.slots.get("url", "")
         browser = ctx.slots.get("browser", "chrome")
 
-        if intent in {"open_browser", "go_to_site"}:
+        if intent == "go_to_site":
+            # Plain "open youtube": open the site in the boss's own
+            # default browser — no Playwright, no new profile, his
+            # logins and cookies are already there.
+            site = (ctx.slots.get("site") or url or "").strip()
+            if not site:
+                return WorkerResult.failed(
+                    "Open which site, boss? Give me the name and I'll open it.")
+            target = resolve_site(site)
+            if dry:
+                return WorkerResult.done(
+                    f"Would open {target} in your browser "
+                    "(dry run — nothing launched).",
+                    url=target)
+            try:
+                opened = webbrowser.open(target)
+            except Exception as exc:  # noqa: BLE001 - report plainly
+                return WorkerResult.failed(f"Couldn't open {target} ({exc}).")
+            if not opened:
+                return WorkerResult.failed(
+                    f"Couldn't open {target} — no browser answered.")
+            return WorkerResult.done(
+                f"Opened {site} in your browser, boss.", url=target)
+
+        if intent == "open_browser":
             if not url:
                 return WorkerResult.failed(
                     "Open which site, boss? Give me the URL and I'll open it.")

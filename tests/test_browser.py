@@ -71,16 +71,25 @@ def test_missing_playwright_download_raises_clear_error(monkeypatch):
         agent.download("https://example.com/f.zip", "/tmp/f.zip")
 
 
-def test_run_without_playwright_returns_failed_result(monkeypatch):
-    # Playwright is genuinely not installed in this venv, so run() must
-    # fail plainly instead of crashing — and say Playwright is the reason.
+def test_run_go_to_site_needs_no_playwright(monkeypatch):
+    # "open youtube" opens the default browser directly — Playwright is
+    # not involved, so a machine without it must still work.
+    monkeypatch.setitem(sys.modules, "playwright", None)
+    monkeypatch.setitem(sys.modules, "playwright.sync_api", None)
+    opened = {}
+
+    def fake_open(url):
+        opened["url"] = url
+        return True
+
+    monkeypatch.setattr("kairo.workers.browser.webbrowser.open", fake_open)
     agent = BrowserAgent()
-    ctx = TaskContext(text="open example", slots={
-        "intent": "go_to_site", "url": "https://example.com"})
+    ctx = TaskContext(text="open youtube", slots={
+        "_intent": "go_to_site", "site": "youtube"})
     result = agent.run(ctx)
-    assert result.ok is False
-    assert "playwright" in result.summary.lower()
-    assert "not installed" in result.summary.lower()
+    assert result.ok is True
+    assert opened["url"] == "https://www.youtube.com"
+    assert "youtube" in result.summary.lower()
 
 
 def test_run_download_without_playwright_returns_failed_result(monkeypatch):
@@ -111,3 +120,60 @@ def test_profile_dir_under_settings_data_dir(tmp_path):
     from kairo.config import Settings
     agent = BrowserAgent(settings=Settings(data_dir=tmp_path))
     assert agent._profile_dir() == tmp_path / "browser-profile"
+
+
+# -- go_to_site (v0.3.8): "open youtube" --------------------------------------
+def test_resolve_site_known_names():
+    from kairo.workers.browser import resolve_site
+    assert resolve_site("youtube") == "https://www.youtube.com"
+    assert resolve_site("gmail") == "https://mail.google.com"
+    assert resolve_site("whatsapp") == "https://web.whatsapp.com"
+    assert resolve_site("Google") == "https://www.google.com"
+
+
+def test_resolve_site_dotted_and_full_urls():
+    from kairo.workers.browser import resolve_site
+    assert resolve_site("example.com") == "https://example.com"
+    assert resolve_site("https://example.com/page") == "https://example.com/page"
+
+
+def test_resolve_site_unknown_name_becomes_search():
+    from kairo.workers.browser import resolve_site
+    assert resolve_site("nasa") == "https://www.google.com/search?q=nasa"
+
+
+def test_go_to_site_dry_run_opens_nothing(monkeypatch):
+    monkeypatch.setattr(
+        "kairo.workers.browser.webbrowser.open",
+        lambda url: (_ for _ in ()).throw(AssertionError("must not open")),
+    )
+    agent = BrowserAgent()
+    ctx = TaskContext(text="open youtube", dry_run=True, slots={
+        "_intent": "go_to_site", "site": "youtube"})
+    result = agent.run(ctx)
+    assert result.ok is True
+    assert "would open" in result.summary.lower()
+    assert "https://www.youtube.com" in result.summary
+
+
+def test_go_to_site_browser_refuses(monkeypatch):
+    monkeypatch.setattr(
+        "kairo.workers.browser.webbrowser.open", lambda url: False)
+    agent = BrowserAgent()
+    ctx = TaskContext(text="open youtube", slots={
+        "_intent": "go_to_site", "site": "youtube"})
+    assert agent.run(ctx).ok is False
+
+
+def test_registry_routes_open_youtube_to_browser_not_apps():
+    from kairo.intents import default_registry
+    registry = default_registry()
+    match = registry.match("open youtube")
+    assert match is not None
+    assert match.name == "go_to_site"
+    assert match.slots == {"site": "youtube"}
+    match = registry.match("open youtube.com")
+    assert match is not None and match.name == "go_to_site"
+    # Real apps still go to the system worker, not the browser.
+    assert registry.match("open chrome").name == "open_app"
+    assert registry.match("open notepad").name == "open_app"

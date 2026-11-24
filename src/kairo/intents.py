@@ -74,6 +74,15 @@ def builtin_intents() -> list[Intent]:
             description="Open a file by name — 'open tabz report in downloads', 'open report.pdf'.",
         ),
         Intent(
+            "go_to_site",
+            [
+                r"(?:open|kholo)\s+(?P<site>youtube|google|gmail|facebook|instagram|twitter|x|whatsapp|github|linkedin|reddit|netflix|chatgpt|wikipedia|stackoverflow|amazon|daraz)\s*$",
+                r"(?:open|kholo)\s+(?P<site>[a-z0-9][a-z0-9\-]*\.(?:com|pk|org|net|io|ai|co|edu|gov)(?:\.[a-z]{2,})?)\s*$",
+            ],
+            "browser",
+            description="Open a website — 'open youtube', 'open google', 'open example.com'.",
+        ),
+        Intent(
             "open_app",
             [r"(?:open|launch|start|kholo|khol\s+do)\s+(?P<app>.+?)\s*$"],
             "system",
