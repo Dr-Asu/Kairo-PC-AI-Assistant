@@ -3,6 +3,7 @@
 Usage:
     python -m kairo            text mode — type commands, get replies
     python -m kairo --voice    voice mode — push-to-talk (needs voice deps)
+    python -m kairo --voice --wake   hands-free voice — wake word, no Enter key
     python -m kairo --hud      serve the web dashboard on 127.0.0.1:8765
     python -m kairo --learn    run the nightly learning job once, then exit
     python -m kairo --check    print status (brain, voice, memory) and exit
@@ -17,6 +18,7 @@ import sys
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="kairo", description="Kairo Assistant")
     parser.add_argument("--voice", action="store_true", help="voice mode (push-to-talk)")
+    parser.add_argument("--wake", action="store_true", help="hands-free voice: wake word instead of Enter (needs openWakeWord; use with --voice)")
     parser.add_argument("--hud", action="store_true", help="serve the web dashboard")
     parser.add_argument("--learn", action="store_true", help="run the nightly learning job once")
     parser.add_argument("--check", action="store_true", help="print status and exit")
@@ -61,10 +63,19 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.voice:
+        from .voice.base import NotAvailable
         from .voice.loop import VoiceLoop
 
         loop = VoiceLoop(boss, settings)
-        loop.run()
+        if args.wake:
+            try:
+                loop.run_hands_free()
+            except NotAvailable as exc:
+                print(f"[kairo] {exc}")
+                print("[kairo] Falling back to push-to-talk voice mode.")
+                loop.run()
+        else:
+            loop.run()
         return 0
 
     # Text mode — the default, and the fastest way to try it.

@@ -11,7 +11,7 @@ pandas
 python-dotenv
 
 # Optional: voice pipeline (install on the Windows PC when setting up voice)
-# faster-whisper
+# faster-whisper "av<19"   (PyAV 19 removed an option faster-whisper uses)
 # piper-tts
 # openwakeword
 # vosk

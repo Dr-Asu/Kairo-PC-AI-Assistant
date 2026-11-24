@@ -223,6 +223,92 @@ def test_run_text_mode_ignores_blank_lines(monkeypatch):
     assert boss.handled == []
 
 
+# -- hands-free run() ------------------------------------------------------
+class FakeWake:
+    """Scripted wake word: returns the given answers, then raises
+    KeyboardInterrupt so the loop exits (like the boss pressing Ctrl+C)."""
+
+    def __init__(self, answers: list[bool]):
+        self.answers = list(answers)
+        self.calls = 0
+
+    def available(self) -> bool:
+        return True
+
+    def listen_once(self, timeout: float = 10.0) -> bool:
+        self.calls += 1
+        if not self.answers:
+            raise KeyboardInterrupt
+        return self.answers.pop(0)
+
+
+class ScriptSTT:
+    """STT that returns one canned transcript per call, then ''."""
+
+    def __init__(self, transcripts: list[str]):
+        self.transcripts = list(transcripts)
+        self.calls: list[bytes] = []
+
+    def available(self) -> bool:
+        return True
+
+    def transcribe(self, audio: bytes) -> str:
+        self.calls.append(audio)
+        return self.transcripts.pop(0) if self.transcripts else ""
+
+
+def test_run_hands_free_does_one_turn_then_quits_on_quit_word(capsys):
+    boss = FakeBoss()
+    tts = FakeTTS()
+    loop = _loop(
+        boss=boss,
+        stt=ScriptSTT(["open notepad", "quit"]),
+        tts=tts,
+        wake=FakeWake([True, True]),
+    )
+    loop.run_hands_free()
+    assert boss.handled == ["open notepad"]
+    assert "Got it, boss: open notepad" in tts.spoken
+    assert "Goodbye, boss." in capsys.readouterr().out
+    assert loop.state.state is AssistantState.IDLE
+
+
+def test_run_hands_free_keeps_waiting_through_timeouts():
+    boss = FakeBoss()
+    loop = _loop(
+        boss=boss,
+        stt=ScriptSTT(["hello"]),
+        tts=FakeTTS(),
+        wake=FakeWake([False, False, True]),
+    )
+    loop.run_hands_free()  # third wake hit, then KeyboardInterrupt ends it
+    assert boss.handled == ["hello"]
+
+
+def test_run_hands_free_ignores_empty_utterances():
+    boss = FakeBoss()
+    loop = _loop(
+        boss=boss,
+        stt=ScriptSTT(["", "what time is it"]),
+        tts=FakeTTS(),
+        wake=FakeWake([True, True]),
+    )
+    loop.run_hands_free()
+    assert boss.handled == ["what time is it"]
+
+
+def test_run_hands_free_raises_without_a_wake_engine():
+    loop = _loop(stt=FakeSTT(), tts=FakeTTS(), wake=NullWakeWord())
+    with pytest.raises(NotAvailable):
+        loop.run_hands_free()
+
+
+def test_run_hands_free_raises_without_audio_engines():
+    loop = _loop(stt=NullSTT(), tts=NullTTS(), wake=FakeWake([True]))
+    with pytest.raises(NotAvailable):
+        loop.run_hands_free()
+
+
 # -- pick_tts ---------------------------------------------------------------
 def _stub_module(monkeypatch, name: str):
     module = types.ModuleType(name)

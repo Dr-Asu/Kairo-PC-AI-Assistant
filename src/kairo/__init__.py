@@ -6,4 +6,4 @@ free tiers (Groq / Gemini) with keys read from a .env file, and the
 assistant also works in a local-only mode with no key.
 """
 
-__version__ = "0.3.1"
+__version__ = "0.3.2"

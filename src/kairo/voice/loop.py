@@ -174,6 +174,51 @@ class VoiceLoop:
         self.speak(reply)
         self.state.transition(AssistantState.IDLE, note="done")
 
+    def run_hands_free(self) -> None:
+        """Hands-free loop: wake word -> listen -> act -> speak -> wait again.
+
+        Say the wake word any time and Kairo listens; after answering it
+        goes back to waiting for the wake word. Say 'quit' (or press
+        Ctrl+C) to leave. Needs a wake-word engine (openWakeWord) plus
+        STT/TTS — without a wake engine it raises NotAvailable so the
+        caller can fall back to push-to-talk instead of hanging silently.
+        """
+        if not self.wake.available():
+            raise NotAvailable(
+                "Hands-free needs a wake-word engine — install openWakeWord "
+                "(`pip install openwakeword`), or use push-to-talk voice mode."
+            )
+        if self.text_mode:
+            raise NotAvailable(
+                "Hands-free needs a microphone and audio libraries — "
+                "install faster-whisper, sounddevice and edge-tts first, "
+                "or use text mode."
+            )
+        print(
+            "[kairo] Hands-free mode — say the wake word any time, boss. "
+            "(Built-in openWakeWord models: 'Hey Jarvis' or 'Alexa'.) "
+            "Say 'quit' to leave, or press Ctrl+C."
+        )
+        try:
+            while True:
+                if not self.wake.listen_once(timeout=30.0):
+                    continue  # nothing heard yet — keep waiting
+                print("[kairo] Yes, boss?")
+                try:
+                    heard = self.listen_once()
+                except NotAvailable as exc:
+                    print(f"[kairo] {exc}")
+                    continue
+                if heard.strip().lower() in QUIT_WORDS:
+                    print("Kairo: Goodbye, boss.")
+                    break
+                self._one_turn(heard)
+        except KeyboardInterrupt:
+            print("\nKairo: Goodbye, boss.")
+        finally:
+            if self.state.state is not AssistantState.IDLE:
+                self.state.transition(AssistantState.IDLE, note="exit")
+
     def run(self) -> None:
         """Push-to-talk loop until the boss says quit (or EOF / Ctrl-C)."""
         if self.text_mode:
