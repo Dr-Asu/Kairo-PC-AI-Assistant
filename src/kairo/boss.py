@@ -121,7 +121,22 @@ class _SystemWorker(Worker):
         slots = ctx.slots or {}
         try:
             if intent == "open_app":
-                return WorkerResult.done(controller.open_app(slots.get("app", "")))
+                from .pc.controller import NotAvailable
+
+                try:
+                    return WorkerResult.done(controller.open_app(slots.get("app", "")))
+                except NotAvailable:
+                    # Maybe it was a file, not an app ("open tabz report"
+                    # with no folder phrase) — search the usual folders.
+                    from .file_open import find_best, open_file as _open_file
+
+                    best, ties = find_best(slots.get("app", ""))
+                    if best is not None and not ties:
+                        try:
+                            return WorkerResult.done(_open_file(best))
+                        except NotAvailable:
+                            pass
+                    raise
             if intent == "close_app":
                 return WorkerResult.done(controller.close_app(slots.get("app", "")))
             if intent == "list_apps":

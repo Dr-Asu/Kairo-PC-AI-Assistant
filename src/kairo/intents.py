@@ -63,6 +63,17 @@ def builtin_intents() -> list[Intent]:
     """The fixed commands the assistant knows out of the box."""
     return [
         Intent(
+            "open_file",
+            [
+                r"open\s+(?P<file>.+?)\s+(?:it\s+is\s+in|in)\s+(?:the\s+)?(?P<folder>download|downloads|desktop|documents)\s*(?:folder)?(?:\s+of\s+my\s+pc)?\s*$",
+                r"open\s+(?P<file>.+?)\s+from\s+(?:the\s+)?(?P<folder>download|downloads|desktop|documents)\s*(?:folder)?\s*$",
+                r"open\s+(?:the\s+)?(?P<file>.+?\.(?:pdf|docx?|xlsx?|pptx?|txt|csv|png|jpe?g|zip|mp4|mp3))\s*$",
+                r"open\s+(?:the\s+)?(?P<file>.+?)\s+file\s*$",
+            ],
+            "files",
+            description="Open a file by name — 'open tabz report in downloads', 'open report.pdf'.",
+        ),
+        Intent(
             "open_app",
             [r"(?:open|launch|start|kholo|khol\s+do)\s+(?P<app>.+?)\s*$"],
             "system",

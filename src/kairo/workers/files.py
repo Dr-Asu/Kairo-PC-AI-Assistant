@@ -38,7 +38,7 @@ class FileOrganizer(Worker):
     """Arrange files and folders. Builder E implements this."""
 
     name = "files"
-    intents = {"copy_files", "move_files", "arrange_folder", "rename_file"}
+    intents = {"copy_files", "move_files", "arrange_folder", "rename_file", "open_file"}
 
     # -- direct methods ---------------------------------------------------
     def copy(self, src: str, dst: str) -> str:
@@ -116,8 +116,13 @@ class FileOrganizer(Worker):
 
     # -- worker entry point ------------------------------------------------
     def run(self, ctx: TaskContext) -> WorkerResult:
-        intent = ctx.slots.get("intent") or ctx.slots.get("kind") or ""
+        # The boss dispatches with slots["_intent"]; older callers used
+        # "intent"/"kind". Read _intent first or file intents never fire.
+        intent = ctx.slots.get("_intent") or ctx.slots.get("intent") or ctx.slots.get("kind") or ""
         try:
+            if intent == "open_file":
+                return self._open_file(ctx)
+
             if intent == "copy_files":
                 src, dst = ctx.slots.get("src", ""), ctx.slots.get("dst", "")
                 if not src or not dst:
@@ -171,9 +176,52 @@ class FileOrganizer(Worker):
 
             return WorkerResult.failed(
                 f"I don't know how to do '{intent or 'that'}' with files — "
-                "I can copy, move, rename, or arrange a folder. "
+                "I can copy, move, rename, open a file, or arrange a folder. "
                 "Tell me which one, boss.")
         except FileNotFoundError as exc:
             return WorkerResult.failed(str(exc))
         except (OSError, ValueError) as exc:
             return WorkerResult.failed(f"Couldn't do that with the files ({exc}).")
+
+    # -- open a file --------------------------------------------------------
+    def _open_file(self, ctx: TaskContext) -> WorkerResult:
+        from ..file_open import SEARCH_FOLDERS, find_best, open_file as _open_file
+        from ..pc.controller import NotAvailable, SystemController
+
+        name = (ctx.slots.get("file") or "").strip()
+        folder = (ctx.slots.get("folder") or "").strip()
+        if not name:
+            return WorkerResult.failed(
+                "Open needs a file name — boss, which file should I open?")
+        best, ties = find_best(name, folder_hint=folder or None)
+        if best is None:
+            # No file by that name — maybe he meant an app ("open excel file").
+            # Only take the app path when Kairo actually knows such an app.
+            try:
+                from ..apps import find_app
+
+                data_dir = getattr(ctx.settings, "data_dir", None) if ctx.settings else None
+                if find_app(name, data_dir) is not None:
+                    opened = SystemController(
+                        dry_run=ctx.dry_run, data_dir=data_dir
+                    ).open_app(name)
+                    return WorkerResult.done(opened)
+            except Exception:
+                pass
+            searched = folder.title() if folder else ", ".join(SEARCH_FOLDERS)
+            return WorkerResult.failed(
+                f"I could not find a file called '{name}' in {searched}, "
+                "boss. Say 'list apps' if it is an app, or check the name.")
+        if ties:
+            shown = ", ".join(p.name for p in [best, *ties][:3])
+            return WorkerResult.failed(
+                f"Boss, I found more than one match for '{name}': {shown} — "
+                "which one should I open?")
+        if ctx.dry_run:
+            return WorkerResult.done(
+                f"Would open {best.name} ({best}) (dry run)", files=[str(best)]
+            )
+        try:
+            return WorkerResult.done(_open_file(best), files=[str(best)])
+        except NotAvailable as exc:
+            return WorkerResult.failed(str(exc))
