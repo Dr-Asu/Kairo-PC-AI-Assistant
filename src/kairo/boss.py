@@ -468,9 +468,9 @@ class Boss:
         overloaded does not kill the cloud brain when both keys exist)."""
         brains: list[Brain] = [self.brain]
         if isinstance(self.brain, GroqBrain) and self.settings.gemini_api_key:
-            brains.append(GeminiBrain(self.settings.gemini_api_key))
+            brains.append(GeminiBrain(self.settings.gemini_api_key, self.settings.gemini_model))
         elif isinstance(self.brain, GeminiBrain) and self.settings.groq_api_key:
-            brains.append(GroqBrain(self.settings.groq_api_key))
+            brains.append(GroqBrain(self.settings.groq_api_key, self.settings.groq_model))
         return brains
 
     def _fall_back_to_brain(self, text: str, task: Task) -> str:

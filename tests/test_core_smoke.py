@@ -184,6 +184,19 @@ def test_get_brain_prefers_groq_then_gemini(tmp_path):
     assert isinstance(get_brain(s), GeminiBrain)
 
 
+def test_get_brain_honours_model_overrides(tmp_path):
+    s = Settings(data_dir=tmp_path, groq_api_key="gsk-x", gemini_api_key="gem-x")
+    brain = get_brain(s)
+    assert isinstance(brain, GroqBrain)
+    assert brain.model == "openai/gpt-oss-120b"
+    s.groq_model = "openai/gpt-oss-20b"
+    assert get_brain(s).model == "openai/gpt-oss-20b"
+    s.groq_api_key = ""
+    assert get_brain(s).model == "gemini-3.8-flash"
+    s.gemini_model = "gemini-3.0-flash"
+    assert get_brain(s).model == "gemini-3.0-flash"
+
+
 class _FakeResponse:
     def __init__(self, payload):
         self._payload = payload

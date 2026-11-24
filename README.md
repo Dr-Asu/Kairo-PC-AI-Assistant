@@ -116,3 +116,5 @@ the Windows PC — see STATUS.md.
 **v0.2.1 (24 Nov 2026):** Gemini model updated — Google retired `gemini-2.0-flash`, now uses `gemini-3.8-flash` (brain + screen vision).
 
 **v0.2.2 (24 Nov 2026):** brain fallback — with both keys set, if Groq fails the boss now tries Gemini instead of dropping to local mode (and vice versa). One provider being down or overloaded no longer kills the cloud brain.
+
+**v0.2.3 (24 Nov 2026):** Groq model updated — `llama-3.3-70b-versatile` went enterprise-only on Groq (Aug 2026), now uses `openai/gpt-oss-120b`. Model names are now changeable in `.env` (`GROQ_MODEL` / `GEMINI_MODEL`), so a future retirement needs no code fix.

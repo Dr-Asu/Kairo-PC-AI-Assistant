@@ -48,10 +48,10 @@ _ROMAN_URDU_WORDS = {
 }
 
 
-def _gemini_url(api_key: str) -> str:
+def _gemini_url(api_key: str, model: str = _GEMINI_MODEL) -> str:
     return (
         "https://generativelanguage.googleapis.com/v1beta/models/"
-        f"{_GEMINI_MODEL}:generateContent?key={api_key}"
+        f"{model}:generateContent?key={api_key}"
     )
 
 
@@ -100,7 +100,7 @@ class ScreenVisionWorker(Worker):
             raise RuntimeError(f"I could not read that screenshot: {exc}") from exc
         try:
             resp = httpx.post(
-                _gemini_url(api_key),
+                _gemini_url(api_key, settings.gemini_model),
                 json={
                     "contents": [
                         {

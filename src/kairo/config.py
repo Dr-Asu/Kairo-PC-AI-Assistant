@@ -40,6 +40,8 @@ class Settings:
 
     groq_api_key: str = ""
     gemini_api_key: str = ""
+    groq_model: str = "openai/gpt-oss-120b"  # Llama 3.3 went enterprise-only Aug 2026
+    gemini_model: str = "gemini-3.8-flash"  # 2.0-flash retired by Google Nov 2026
     kairo_token: str = ""
     language: str = "en"  # "en" English, "ur" Roman Urdu
     data_dir: Path = field(default_factory=lambda: Path.home() / ".kairo")
@@ -80,6 +82,10 @@ def get_settings() -> Settings:
         _SETTINGS = Settings(
             groq_api_key=os.environ.get("GROQ_API_KEY", "").strip(),
             gemini_api_key=os.environ.get("GEMINI_API_KEY", "").strip(),
+            groq_model=os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b").strip()
+            or "openai/gpt-oss-120b",
+            gemini_model=os.environ.get("GEMINI_MODEL", "gemini-3.8-flash").strip()
+            or "gemini-3.8-flash",
             kairo_token=os.environ.get("KAIRO_TOKEN", "").strip(),
             language=os.environ.get("KAIRO_LANGUAGE", "en").strip().lower() or "en",
             data_dir=Path(data_dir),

@@ -40,7 +40,7 @@ class GroqBrain(Brain):
     """Groq free tier — OpenAI-compatible chat completions endpoint."""
 
     name = "groq"
-    MODEL = "llama-3.3-70b-versatile"
+    MODEL = "openai/gpt-oss-120b"  # llama-3.3-70b went enterprise-only Aug 2026
     URL = "https://api.groq.com/openai/v1/chat/completions"
 
     def __init__(self, api_key: str, model: str = MODEL) -> None:
@@ -132,9 +132,9 @@ class LocalBrain(Brain):
 def get_brain(settings: Settings) -> Brain:
     """Pick the brain: Groq first, then Gemini, then local-only."""
     if settings.groq_api_key:
-        return GroqBrain(settings.groq_api_key)
+        return GroqBrain(settings.groq_api_key, settings.groq_model)
     if settings.gemini_api_key:
-        return GeminiBrain(settings.gemini_api_key)
+        return GeminiBrain(settings.gemini_api_key, settings.gemini_model)
     return LocalBrain()
 
 
