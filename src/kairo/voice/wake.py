@@ -44,15 +44,31 @@ class OpenWakeWordAdapter:
         return self._available
 
     def _load_model(self):
-        """Load the openWakeWord model on first use."""
+        """Load the openWakeWord model on first use.
+
+        openWakeWord 0.2.x defaults to tflite models and crashes without
+        tflite-runtime (``ValueError: Tried to import the tflite runtime
+        ...``); 0.3+ is ONNX-only and needs no extra install. That crash
+        is converted to NotAvailable with the fix, so the caller falls
+        back to push-to-talk instead of dying with a raw traceback.
+        """
         if self._model is not None:
             return self._model
         from openwakeword.model import Model
 
-        if self.model_path:
-            self._model = Model(wakeword_models=[self.model_path])
-        else:
-            self._model = Model()
+        try:
+            if self.model_path:
+                self._model = Model(wakeword_models=[self.model_path])
+            else:
+                self._model = Model()
+        except ValueError as exc:
+            if "tflite" not in str(exc).lower():
+                raise
+            raise NotAvailable(
+                "openWakeWord is too old (0.2.x needs tflite-runtime). "
+                'Upgrade it: pip install "openwakeword>=0.3" — 0.3+ is '
+                "ONNX-only and needs no extra install."
+            ) from exc
         return self._model
 
     def listen_once(self, timeout: float = 10.0) -> bool:

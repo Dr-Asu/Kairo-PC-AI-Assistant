@@ -223,6 +223,90 @@ def test_run_text_mode_ignores_blank_lines(monkeypatch):
     assert boss.handled == []
 
 
+# -- openWakeWord adapter with stubbed libraries ---------------------------
+class _FakeStream:
+    """sounddevice InputStream stand-in: yields silence forever."""
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def read(self, n):
+        import numpy as np
+
+        return np.zeros(n, dtype=np.int16), False
+
+
+def _stub_openwakeword(monkeypatch, model_cls):
+    """Pretend openwakeword + sounddevice are installed, with a chosen Model."""
+    module = types.ModuleType("openwakeword")
+    monkeypatch.setitem(sys.modules, "openwakeword", module)
+    model_module = types.ModuleType("openwakeword.model")
+    model_module.Model = model_cls
+    monkeypatch.setitem(sys.modules, "openwakeword.model", model_module)
+    sd_module = types.ModuleType("sounddevice")
+    sd_module.InputStream = _FakeStream
+    monkeypatch.setitem(sys.modules, "sounddevice", sd_module)
+
+
+class _WakeModel:
+    """Model that hears 'Hey Jarvis' on every block."""
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def predict(self, block):
+        return {"hey_jarvis": 0.9, "alexa": 0.0}
+
+
+class _SilentModel:
+    """Model that never hears the wake word."""
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def predict(self, block):
+        return {"hey_jarvis": 0.0}
+
+
+class _TfliteModel:
+    """openWakeWord 0.2.x without tflite-runtime: crashes on load."""
+
+    def __init__(self, *args, **kwargs):
+        raise ValueError(
+            "Tried to import the tflite runtime for provided tflite models, "
+            "but it was not found. Please install it using "
+            "`pip install tflite-runtime`"
+        )
+
+
+def test_openwakeword_listen_once_returns_true_on_wake(monkeypatch):
+    _stub_openwakeword(monkeypatch, _WakeModel)
+    adapter = OpenWakeWordAdapter()
+    assert adapter.available() is True
+    assert adapter.listen_once(timeout=5.0) is True
+
+
+def test_openwakeword_listen_once_times_out_on_silence(monkeypatch):
+    _stub_openwakeword(monkeypatch, _SilentModel)
+    adapter = OpenWakeWordAdapter()
+    assert adapter.listen_once(timeout=0.05) is False
+
+
+def test_openwakeword_tflite_error_becomes_not_available(monkeypatch):
+    _stub_openwakeword(monkeypatch, _TfliteModel)
+    adapter = OpenWakeWordAdapter()
+    assert adapter.available() is True
+    with pytest.raises(NotAvailable) as excinfo:
+        adapter.listen_once(timeout=5.0)
+    assert "openwakeword>=0.3" in str(excinfo.value)
+
+
 # -- hands-free run() ------------------------------------------------------
 class FakeWake:
     """Scripted wake word: returns the given answers, then raises

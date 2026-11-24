@@ -13,7 +13,7 @@ python-dotenv
 # Optional: voice pipeline (install on the Windows PC when setting up voice)
 # faster-whisper "av<19"   (PyAV 19 removed an option faster-whisper uses)
 # piper-tts
-# openwakeword
+# "openwakeword>=0.3"   (0.2.x needs tflite-runtime; 0.3+ is ONNX-only)
 # vosk
 # sounddevice
 # edge-tts
