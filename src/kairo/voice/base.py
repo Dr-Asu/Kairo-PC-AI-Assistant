@@ -39,6 +39,11 @@ class TTS(Protocol):
         """Stop speaking immediately (barge-in)."""
         ...
 
+    @property
+    def speaking(self) -> bool:
+        """True while speech is still playing."""
+        ...
+
 
 class NullWakeWord:
     """Wake word engine that is never available (no library installed)."""
@@ -67,3 +72,7 @@ class NullTTS:
 
     def stop(self) -> None:
         pass
+
+    @property
+    def speaking(self) -> bool:
+        return False

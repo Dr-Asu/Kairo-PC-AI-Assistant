@@ -403,14 +403,14 @@ def test_openwakeword_bad_block_does_not_kill_the_listener(monkeypatch, capsys):
     assert "continuing to listen" in capsys.readouterr().out
 
 
-def test_pick_voice_mode_hands_free_when_wake_engine_installed():
+def test_pick_voice_mode_conversation_when_wake_engine_installed():
     loop = _loop(stt=FakeSTT(), tts=FakeTTS(), wake=FakeWake([True]))
-    assert pick_voice_mode(loop, wake_requested=False) == "hands_free"
+    assert pick_voice_mode(loop, wake_requested=False) == "conversation"
 
 
-def test_pick_voice_mode_hands_free_when_wake_requested():
+def test_pick_voice_mode_conversation_when_wake_requested():
     loop = _loop(stt=FakeSTT(), tts=FakeTTS(), wake=NullWakeWord())
-    assert pick_voice_mode(loop, wake_requested=True) == "hands_free"
+    assert pick_voice_mode(loop, wake_requested=True) == "conversation"
 
 
 def test_pick_voice_mode_push_to_talk_without_wake_engine():
@@ -502,6 +502,168 @@ def test_run_hands_free_raises_without_audio_engines():
     loop = _loop(stt=NullSTT(), tts=NullTTS(), wake=FakeWake([True]))
     with pytest.raises(NotAvailable):
         loop.run_hands_free()
+
+
+# -- real-time conversation mode (v0.3.10) ----------------------------------
+def test_tts_speaking_is_false_when_nothing_is_playing():
+    assert EdgeTTS().speaking is False
+    assert PiperTTS().speaking is False
+    assert NullTTS().speaking is False
+
+
+class _LoudStream(_FakeStream):
+    """Mic stream that is always loud — the boss interrupting."""
+
+    def read(self, n):
+        import numpy as np
+
+        return np.full(n, 3000, dtype=np.int16), False
+
+
+class _SpeakingTTS:
+    """TTS whose `speaking` is True for a set number of checks, then False."""
+
+    def __init__(self, true_reads: int = 2):
+        self._true_reads = true_reads
+        self._reads = 0
+        self.stop_calls = 0
+
+    def available(self) -> bool:
+        return True
+
+    @property
+    def speaking(self) -> bool:
+        self._reads += 1
+        return self._reads <= self._true_reads
+
+    def speak(self, text: str) -> None:
+        pass
+
+    def stop(self) -> None:
+        self.stop_calls += 1
+
+
+def _stub_sounddevice(monkeypatch, stream_cls):
+    """Pretend sounddevice is installed, with a chosen InputStream."""
+    sd_module = types.ModuleType("sounddevice")
+    sd_module.InputStream = stream_cls
+    monkeypatch.setitem(sys.modules, "sounddevice", sd_module)
+
+
+def test_barge_in_stops_speech_on_loud_mic(monkeypatch):
+    _stub_sounddevice(monkeypatch, _LoudStream)
+    tts = FakeTTS()
+    tts.speaking = True
+    loop = _loop(stt=FakeSTT(), tts=tts, wake=FakeWake([True]))
+    barged_in, audio = loop._watch_for_speech_while_speaking()
+    assert barged_in is True
+    assert audio  # the boss's opening words were kept
+    assert tts.stop_calls == 1
+    assert tts.speaking is False
+
+
+def test_barge_in_returns_false_when_reply_finishes(monkeypatch):
+    _stub_sounddevice(monkeypatch, _FakeStream)  # silence
+    loop = _loop(stt=FakeSTT(), tts=_SpeakingTTS(true_reads=2), wake=FakeWake([True]))
+    barged_in, audio = loop._watch_for_speech_while_speaking()
+    assert barged_in is False
+    assert audio == b""
+
+
+def test_barge_in_returns_false_when_not_speaking():
+    # Nothing is playing, so no mic is opened at all.
+    loop = _loop(stt=FakeSTT(), tts=FakeTTS(), wake=FakeWake([True]))
+    assert loop.tts.speaking is False
+    assert loop._watch_for_speech_while_speaking() == (False, b"")
+
+
+def test_speak_with_barge_in_returns_audio_heard(monkeypatch):
+    _stub_sounddevice(monkeypatch, _LoudStream)
+    tts = FakeTTS()
+    loop = _loop(stt=FakeSTT(), tts=tts, wake=FakeWake([True]))
+    barged_in, audio = loop._speak_with_barge_in("Done, boss.")
+    assert barged_in is True
+    assert audio
+    assert tts.spoken == ["Done, boss."]
+    assert tts.stop_calls == 1
+
+
+def _scripted_listen(monkeypatch, loop, lines, prefixes=None):
+    """Replace listen_once with a scripted one; record the prefixes it got."""
+    it = iter(lines)
+
+    def _listen(prefix=b""):
+        if prefixes is not None:
+            prefixes.append(prefix)
+        return next(it, "")
+
+    monkeypatch.setattr(loop, "listen_once", _listen)
+
+
+def test_conversation_session_times_out_after_quiet_turns(monkeypatch):
+    boss = FakeBoss()
+    loop = _loop(boss=boss, stt=FakeSTT(), tts=FakeTTS(), wake=FakeWake([True]))
+    _scripted_listen(monkeypatch, loop, ["open notepad", "", ""])
+    monkeypatch.setattr(
+        loop, "_speak_with_barge_in", lambda text: (False, b""))
+    assert loop._conversation_session() == "timeout"
+    assert boss.handled == ["open notepad"]
+
+
+def test_conversation_session_quits_on_quit_word(monkeypatch):
+    boss = FakeBoss()
+    loop = _loop(boss=boss, stt=FakeSTT(), tts=FakeTTS(), wake=FakeWake([True]))
+    _scripted_listen(monkeypatch, loop, ["open notepad", "quit"])
+    monkeypatch.setattr(
+        loop, "_speak_with_barge_in", lambda text: (False, b""))
+    assert loop._conversation_session() == "quit"
+    assert boss.handled == ["open notepad"]
+
+
+def test_conversation_session_carries_barged_in_audio_to_next_listen(monkeypatch):
+    boss = FakeBoss()
+    loop = _loop(boss=boss, stt=FakeSTT(), tts=FakeTTS(), wake=FakeWake([True]))
+    prefixes: list[bytes] = []
+    _scripted_listen(
+        monkeypatch, loop, ["open notepad", "what time is it", "quit"],
+        prefixes=prefixes,
+    )
+
+    def _barge_in(text):
+        return (True, b"LOUD-AUDIO")  # boss interrupted the first reply
+
+    monkeypatch.setattr(loop, "_speak_with_barge_in", _barge_in)
+    assert loop._conversation_session() == "quit"
+    assert prefixes[0] == b""
+    assert prefixes[1] == b"LOUD-AUDIO"  # interruption words were not lost
+    assert boss.handled == ["open notepad", "what time is it"]
+
+
+def test_run_conversation_talks_back_and_forth_then_times_out(monkeypatch):
+    boss = FakeBoss()
+    loop = _loop(
+        boss=boss,
+        stt=ScriptSTT(["open notepad", "", ""]),
+        tts=FakeTTS(),
+        wake=FakeWake([True]),
+    )
+    # The reply is spoken, not watched — the watch needs a real mic.
+    monkeypatch.setattr(
+        loop, "_speak_with_barge_in", lambda text: (False, b""))
+    loop.run_conversation()  # wake hit, session, quiet timeout, then Ctrl+C
+    assert boss.handled == ["open notepad"]
+
+
+def test_run_conversation_raises_without_a_wake_engine():
+    loop = _loop(stt=FakeSTT(), tts=FakeTTS(), wake=NullWakeWord())
+    with pytest.raises(NotAvailable):
+        loop.run_conversation()
+
+
+def test_run_conversation_raises_without_audio_engines():
+    loop = _loop(stt=NullSTT(), tts=NullTTS(), wake=FakeWake([True]))
+    with pytest.raises(NotAvailable):
+        loop.run_conversation()
 
 
 # -- Windows MCI player (edge-tts playback on stock Windows) --------------

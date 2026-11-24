@@ -17,7 +17,9 @@ Builder B owns this file.
 
 from __future__ import annotations
 
+import struct
 import time
+from collections import deque
 
 from ..boss import Boss
 from ..config import Settings
@@ -29,6 +31,32 @@ from .wake import OpenWakeWordAdapter, PorcupineAdapter
 
 QUIT_WORDS = {"quit", "exit", "bye", "q"}
 SAMPLE_RATE = 16000
+
+# Conversation mode: after the wake word, talk back and forth with no
+# wake word between turns. This many empty listens (~30 s of quiet) end
+# the session and Kairo goes back to waiting for the wake word.
+CONVERSATION_QUIET_TURNS = 2
+# Barge-in: while Kairo speaks, this loud a mic signal counts as the boss
+# interrupting. Higher than the 500 speech threshold in _record_utterance
+# so Kairo's own speaker output does not constantly trip it; this many
+# loud blocks in a row (~0.2 s) must agree before it stops.
+BARGE_IN_RMS = 2000
+BARGE_IN_BLOCKS = 3
+# How much of the boss's opening words to keep when they interrupt — the
+# last ~1 s of mic audio (16 blocks of 1024 samples at 16 kHz).
+BARGE_IN_KEEP_BLOCKS = 16
+
+
+def _rms_int16(raw: bytes) -> float:
+    """Root-mean-square of 16-bit mono PCM bytes (0 for empty input).
+
+    Pure stdlib, so the barge-in watch needs no numpy.
+    """
+    if len(raw) < 2:
+        return 0.0
+    count = len(raw) // 2
+    samples = struct.unpack(f"<{count}h", raw[: count * 2])
+    return (sum(s * s for s in samples) / count) ** 0.5
 
 
 def _default_stt():
@@ -97,10 +125,10 @@ def _record_utterance(max_seconds: float = 15.0, silence_seconds: float = 1.5) -
 
 
 def pick_voice_mode(loop: "VoiceLoop", wake_requested: bool) -> str:
-    """Choose the voice mode: hands-free when asked for, or when a wake
-    engine is installed; otherwise push-to-talk (Enter to talk)."""
+    """Choose the voice mode: real-time conversation when a wake engine
+    is installed (or asked for); otherwise push-to-talk (Enter to talk)."""
     if wake_requested or loop.wake.available():
-        return "hands_free"
+        return "conversation"
     return "push_to_talk"
 
 
@@ -120,8 +148,13 @@ class VoiceLoop:
         """True when no audio engines are available — typed lines instead."""
         return not self.stt.available() and not self.tts.available()
 
-    def listen_once(self) -> str:
-        """Transcribe one utterance (or read one typed line in text mode)."""
+    def listen_once(self, prefix: bytes = b"") -> str:
+        """Transcribe one utterance (or read one typed line in text mode).
+
+        ``prefix`` is audio already heard — the boss's opening words
+        captured while Kairo was speaking (barge-in) — prepended to the
+        fresh recording so an interruption loses no words.
+        """
         self.state.transition(AssistantState.LISTENING, note="listen")
         try:
             if self.text_mode:
@@ -132,7 +165,7 @@ class VoiceLoop:
                 return line.strip()
             audio = _record_utterance()
             try:
-                return self.stt.transcribe(audio).strip()
+                return self.stt.transcribe(prefix + audio).strip()
             except NotAvailable:
                 # STT vanished mid-flight: fall back to a typed line.
                 print("[kairo] Speech-to-text is not available; type instead, boss.")
@@ -181,6 +214,151 @@ class VoiceLoop:
             reply = f"Sorry, boss — that didn't work: {exc}"
         self.speak(reply)
         self.state.transition(AssistantState.IDLE, note="done")
+
+    # -- real-time conversation (v0.3.10) ----------------------------------
+    def _watch_for_speech_while_speaking(self) -> tuple[bool, bytes]:
+        """Watch the mic while Kairo speaks. Returns (barged_in, audio).
+
+        Loud mic audio means the boss started talking: stop the speech
+        at once and return the audio heard from the moment they started,
+        so the next listen does not lose their first words. Only the
+        last ~1 s of mic audio is kept — the buffer is a rolling window,
+        so Kairo's own speaker output never piles up in it. Returns
+        (False, b"") when the reply finishes uninterrupted, or when
+        there is no microphone to watch with.
+        """
+        tts = self.tts
+        if not getattr(tts, "speaking", False):
+            return False, b""
+        try:
+            import sounddevice as sd
+        except ImportError:
+            # No mic to watch with: wait for the reply to finish on its
+            # own (capped, so a stuck player can never hang the loop).
+            deadline = time.monotonic() + 120.0
+            while getattr(tts, "speaking", False) and time.monotonic() < deadline:
+                time.sleep(0.05)
+            return False, b""
+        heard: deque[bytes] = deque(maxlen=BARGE_IN_KEEP_BLOCKS)
+        loud_runs = 0
+        try:
+            with sd.InputStream(
+                samplerate=SAMPLE_RATE, channels=1, dtype="int16", blocksize=1024
+            ) as stream:
+                while getattr(tts, "speaking", False):
+                    block, _overflow = stream.read(1024)
+                    raw = bytes(block)
+                    rms = _rms_int16(raw)
+                    if rms >= 500:  # the boss is saying something — keep it
+                        heard.append(raw)
+                    if rms >= BARGE_IN_RMS:
+                        loud_runs += 1
+                        if loud_runs >= BARGE_IN_BLOCKS:
+                            tts.stop()
+                            return True, b"".join(heard)
+                    else:
+                        loud_runs = 0
+        except Exception:
+            # Mic trouble mid-speech must never kill the reply — just
+            # let it finish.
+            return False, b""
+        return False, b""
+
+    def _speak_with_barge_in(self, text: str) -> tuple[bool, bytes]:
+        """Speak a reply while listening for the boss. Returns
+        (barged_in, audio_heard): True + the boss's opening words when
+        they interrupted, False + b"" when the reply played out fully."""
+        self.state.transition(AssistantState.SPEAKING, note="speak")
+        if self.tts.available():
+            try:
+                self.tts.speak(text)
+            except NotAvailable as exc:
+                print(f"[kairo] {exc}")
+                print(f"Kairo: {text}", flush=True)
+                return False, b""
+            return self._watch_for_speech_while_speaking()
+        print(f"Kairo: {text}", flush=True)
+        return False, b""
+
+    def _one_turn_conversational(self, heard: str) -> tuple[bool, bytes]:
+        """One conversational turn: think, then speak while listening
+        for an interruption. Returns (barged_in, audio_heard) — the
+        next listen picks up where the boss's interruption left off."""
+        if not heard.strip():
+            return False, b""
+        self.state.transition(AssistantState.THINKING, note="think")
+        try:
+            reply = self.boss.handle(heard)
+        except Exception as exc:  # never kill the loop on one bad turn
+            reply = f"Sorry, boss — that didn't work: {exc}"
+        barged_in, audio = self._speak_with_barge_in(reply)
+        if self.state.state is AssistantState.SPEAKING:
+            self.state.transition(AssistantState.IDLE, note="done")
+        return barged_in, audio
+
+    def _conversation_session(self) -> str:
+        """One open conversation after the wake word: turns back and
+        forth with no wake word between them, until the boss says quit
+        or goes quiet. Returns "quit" or "timeout"."""
+        pending_audio = b""
+        quiet_turns = 0
+        while True:
+            heard = self.listen_once(prefix=pending_audio)
+            pending_audio = b""
+            if not heard.strip():
+                quiet_turns += 1
+                if quiet_turns >= CONVERSATION_QUIET_TURNS:
+                    print(
+                        "[kairo] Going quiet, boss — say the wake word "
+                        "when you need me."
+                    )
+                    return "timeout"
+                continue
+            quiet_turns = 0
+            if heard.strip().lower() in QUIT_WORDS:
+                print("Kairo: Goodbye, boss.")
+                return "quit"
+            _barged_in, pending_audio = self._one_turn_conversational(heard)
+
+    def run_conversation(self) -> None:
+        """Real-time conversation: wake once, then just talk.
+
+        Say the wake word and Kairo listens; after answering it keeps
+        listening — no wake word, no Enter key between turns. Start
+        talking while Kairo speaks and it stops at once to hear you
+        (barge-in). Say 'quit' (or press Ctrl+C) to leave, or just go
+        quiet for ~30 seconds and it goes back to waiting for the wake
+        word.
+        """
+        if not self.wake.available():
+            raise NotAvailable(
+                "Conversation mode needs a wake-word engine — install "
+                "openWakeWord (`pip install openwakeword`), or use "
+                "push-to-talk voice mode."
+            )
+        if self.text_mode:
+            raise NotAvailable(
+                "Conversation mode needs a microphone and audio libraries — "
+                "install faster-whisper, sounddevice and edge-tts first, "
+                "or use text mode."
+            )
+        print(
+            "[kairo] Conversation mode — say the wake word, then just "
+            "talk, boss. No wake word between turns, and you can "
+            "interrupt me any time. Say 'quit' to leave, or press Ctrl+C."
+        )
+        try:
+            while True:
+                if not self.wake.listen_once(timeout=30.0):
+                    continue  # nothing heard yet — keep waiting
+                print("[kairo] Yes, boss?")
+                if self._conversation_session() == "quit":
+                    break
+        except KeyboardInterrupt:
+            print("\nKairo: Goodbye, boss.")
+        finally:
+            if self.state.state is not AssistantState.IDLE:
+                self.state.transition(AssistantState.IDLE, note="exit")
 
     def run_hands_free(self) -> None:
         """Hands-free loop: wake word -> listen -> act -> speak -> wait again.

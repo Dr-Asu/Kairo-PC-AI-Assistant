@@ -156,6 +156,12 @@ class PiperTTS:
     def available(self) -> bool:
         return self._available
 
+    @property
+    def speaking(self) -> bool:
+        """True while the speak thread is still running."""
+        thread = self._speak_thread
+        return thread is not None and thread.is_alive()
+
     def _load_voice(self):
         if self._piper_voice is not None:
             return self._piper_voice
@@ -262,6 +268,13 @@ class EdgeTTS:
 
     def available(self) -> bool:
         return self._available
+
+    @property
+    def speaking(self) -> bool:
+        """True while the speak thread is still running (synthesis +
+        playback — the thread waits for the player to finish)."""
+        thread = self._speak_thread
+        return thread is not None and thread.is_alive()
 
     async def _synthesize(self, text: str, path: str) -> None:
         import edge_tts
