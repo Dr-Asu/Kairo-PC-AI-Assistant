@@ -242,6 +242,29 @@ def test_brain_error_is_plain_and_falls_back_to_local(tmp_path):
     assert "local mode" in reply.lower()
 
 
+def test_brain_falls_back_from_groq_to_gemini(tmp_path, monkeypatch):
+    """Both keys set: Groq down => Gemini answers instead of local mode."""
+    from kairo.brain import BrainError, BrainReply, GeminiBrain, GroqBrain, get_brain
+
+    boss = _boss(tmp_path)
+    boss.settings.groq_api_key = "gsk-x"
+    boss.settings.gemini_api_key = "gem-x"
+    boss.brain = get_brain(boss.settings)
+    assert isinstance(boss.brain, GroqBrain)
+
+    def _groq_down(self, system, user):
+        raise BrainError("Groq request failed: boom")
+
+    def _gemini_ok(self, system, user):
+        return BrainReply(text="Gemini here, boss.", model="gemini/test")
+
+    monkeypatch.setattr(GroqBrain, "complete", _groq_down)
+    monkeypatch.setattr(GeminiBrain, "complete", _gemini_ok)
+    reply = boss.handle("write me a poem about the moon")
+    assert reply == "Gemini here, boss."
+    assert ("write me a poem about the moon", "done") in boss.memory.logged
+
+
 def test_memory_snippet_is_wrapped_as_untrusted_for_brain(tmp_path):
     boss = _boss(tmp_path)
     seen: dict = {}

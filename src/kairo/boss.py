@@ -25,7 +25,15 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Callable
 
-from .brain import Brain, BrainError, boss_system_prompt, get_brain
+from .brain import (
+    Brain,
+    BrainError,
+    GeminiBrain,
+    GroqBrain,
+    LocalBrain,
+    boss_system_prompt,
+    get_brain,
+)
 from .config import Settings, get_settings
 from .intents import Intent, default_registry
 from .safety import (
@@ -454,28 +462,41 @@ class Boss:
         return f"{summary} Done, boss."
 
     # -- brain fallback -------------------------------------------------------
+    def _brains_in_order(self) -> list[Brain]:
+        """Brains to try, in order: the primary first, then the other
+        cloud brain as a fallback (so one provider being down or
+        overloaded does not kill the cloud brain when both keys exist)."""
+        brains: list[Brain] = [self.brain]
+        if isinstance(self.brain, GroqBrain) and self.settings.gemini_api_key:
+            brains.append(GeminiBrain(self.settings.gemini_api_key))
+        elif isinstance(self.brain, GeminiBrain) and self.settings.groq_api_key:
+            brains.append(GroqBrain(self.settings.groq_api_key))
+        return brains
+
     def _fall_back_to_brain(self, text: str, task: Task) -> str:
         self._advance(task, TaskState.ASSIGNED)
         self._advance(task, TaskState.WORKING)
         system = boss_system_prompt(self._memory_snippet(text))
-        try:
-            reply = self.brain.complete(system, text)
-        except BrainError:
-            self._advance(task, TaskState.FAILED, note="brain unreachable")
-            self._log_task(text, "failed")
-            return (
-                "Boss, the cloud brain could not be reached just now, so I "
-                "am in local mode for the moment — fixed commands still "
-                "work. Please try again in a bit."
-            )
-        except Exception as exc:  # pragma: no cover - defensive
-            self._advance(task, TaskState.FAILED, note=str(exc))
-            self._log_task(text, "failed")
-            return f"Boss, something went wrong with the brain: {exc}"
-        self._advance(task, TaskState.VERIFYING)
-        self._advance(task, TaskState.DONE)
-        self._log_task(text, "done")
-        return reply.text
+        for brain in self._brains_in_order():
+            try:
+                reply = brain.complete(system, text)
+            except BrainError:
+                continue  # try the next brain (other provider)
+            except Exception as exc:  # pragma: no cover - defensive
+                self._advance(task, TaskState.FAILED, note=str(exc))
+                self._log_task(text, "failed")
+                return f"Boss, something went wrong with the brain: {exc}"
+            self._advance(task, TaskState.VERIFYING)
+            self._advance(task, TaskState.DONE)
+            self._log_task(text, "done")
+            return reply.text
+        self._advance(task, TaskState.FAILED, note="brain unreachable")
+        self._log_task(text, "failed")
+        return (
+            "Boss, the cloud brain could not be reached just now, so I "
+            "am in local mode for the moment — fixed commands still "
+            "work. Please try again in a bit."
+        )
 
     # -- main entry -----------------------------------------------------------
     def handle(self, text: str) -> str:
