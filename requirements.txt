@@ -13,7 +13,7 @@ python-dotenv
 # Optional: voice pipeline (install on the Windows PC when setting up voice)
 # faster-whisper "av<19"   (PyAV 19 removed an option faster-whisper uses)
 # piper-tts
-# "openwakeword>=0.3"   (0.2.x needs tflite-runtime; 0.3+ is ONNX-only)
+# openwakeword (any version — Kairo uses the ONNX models, so no tflite-runtime is ever needed; the wake-word models download once on first use)
 # vosk
 # sounddevice
 # edge-tts

@@ -46,28 +46,43 @@ class OpenWakeWordAdapter:
     def _load_model(self):
         """Load the openWakeWord model on first use.
 
-        openWakeWord 0.2.x defaults to tflite models and crashes without
-        tflite-runtime (``ValueError: Tried to import the tflite runtime
-        ...``); 0.3+ is ONNX-only and needs no extra install. That crash
-        is converted to NotAvailable with the fix, so the caller falls
-        back to push-to-talk instead of dying with a raw traceback.
+        Always uses the ONNX models: the default tflite path needs
+        tflite-runtime, which has no wheel for Python 3.14, so it can
+        never install on a fresh Python 3.14 PC. ONNX needs only
+        onnxruntime, which openWakeWord already depends on. openWakeWord
+        0.6+ does not download the models itself, so they are downloaded
+        first (one-time, ~15 MB from GitHub; skipped when already there).
+        0.3/0.4 do not accept the inference_framework argument — plain
+        Model() is ONNX-only there, so fall back to it. Any load failure
+        becomes NotAvailable, so the caller falls back to push-to-talk
+        instead of dying with a raw traceback.
         """
         if self._model is not None:
             return self._model
         from openwakeword.model import Model
 
         try:
-            if self.model_path:
-                self._model = Model(wakeword_models=[self.model_path])
-            else:
-                self._model = Model()
-        except ValueError as exc:
-            if "tflite" not in str(exc).lower():
-                raise
+            from openwakeword.utils import download_models
+
+            download_models()
+        except Exception:
+            pass  # older versions download the models themselves
+        kwargs = {}
+        if self.model_path:
+            kwargs["wakeword_model_paths"] = [self.model_path]
+        try:
+            try:
+                self._model = Model(inference_framework="onnx", **kwargs)
+            except TypeError:
+                # 0.3.x/0.4.0: no inference_framework parameter.
+                self._model = Model(**kwargs)
+        except Exception as exc:
             raise NotAvailable(
-                "openWakeWord is too old (0.2.x needs tflite-runtime). "
-                'Upgrade it: pip install "openwakeword>=0.3" — 0.3+ is '
-                "ONNX-only and needs no extra install."
+                "openWakeWord could not load its wake-word models. Make "
+                "sure the PC is online the first time (the models download "
+                "once, ~15 MB) and openWakeWord is up to date: pip install "
+                '--upgrade "openwakeword>=0.3". '
+                f"Detail: {exc}"
             ) from exc
         return self._model
 
